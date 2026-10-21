@@ -60,6 +60,7 @@ type registration struct {
 }
 
 type registrationCapabilities struct {
+	ModelRouter           bool                         `json:"model_router"`
 	ModelRegistrar        bool                         `json:"model_registrar"`
 	ModelProvider         bool                         `json:"model_provider"`
 	Executor              bool                         `json:"executor"`
@@ -116,6 +117,30 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		return okEnvelope(pluginapi.ModelResponse{Provider: pluginID, Models: configuredModels()})
 	case pluginabi.MethodExecutorIdentifier:
 		return okEnvelope(identifierResponse{Identifier: pluginID})
+	case pluginabi.MethodModelRoute:
+		var req pluginapi.ModelRouteRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		for _, model := range modelIDs(context.Background()) {
+			if req.RequestedModel == model {
+				return okEnvelope(pluginapi.ModelRouteResponse{Handled: true, TargetKind: pluginapi.ModelRouteTargetSelf, Reason: "configured ZCode model"})
+			}
+		}
+		return okEnvelope(pluginapi.ModelRouteResponse{})
+	case pluginabi.MethodExecutorExecute, pluginabi.MethodExecutorCountTokens, pluginabi.MethodExecutorExecuteStream:
+		var req rpcExecutorRequest
+		if err := json.Unmarshal(request, &req); err != nil {
+			return nil, err
+		}
+		if method == pluginabi.MethodExecutorExecuteStream {
+			return executeStream(req)
+		}
+		path := "/v1/messages"
+		if method == pluginabi.MethodExecutorCountTokens {
+			path += "/count_tokens"
+		}
+		return executeOnce(req, path)
 	default:
 		return errorEnvelope("unknown_method", "unknown method: "+method, 0), nil
 	}
@@ -234,6 +259,7 @@ func pluginRegistration() registration {
 			},
 		},
 		Capabilities: registrationCapabilities{
+			ModelRouter:           true,
 			ModelRegistrar:        true,
 			ModelProvider:         true,
 			Executor:              true,

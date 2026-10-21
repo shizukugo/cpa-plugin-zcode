@@ -80,7 +80,19 @@ CPA 静态模型注册阶段没有客户端 API key，因此需要动态发现�
 
 并透传给上游。
 
-## 构建
+## 请求执行与路由
+
+插件为已注册的模型声明自路由，将请求交给 ZCode 执行器，避免静态模型落入 CPA 的凭证选择流程而返回 `auth_not_found`。未匹配的模型交回 CPA 继续路由。
+
+执行器支持 `execute`、`execute_stream` 和 `count_tokens`，分别调用上游 `/v1/messages` 和 `/v1/messages/count_tokens`；请求中的模型名按 `model_map` 映射。执行请求使用 CPA host HTTP callbacks，沿用 host 的取消、代理与请求日志机制，`timeout_seconds` 限制执行操作的持续时间。动态模型发现仍沿用原有模型列表请求实现。
+
+上游 HTTP 错误保留状态码，错误文本中的本次上游 API key 会被脱敏。插件只构造上游所需 headers，不转发客户端 Cookie 等无关 headers；配置固定 `api_key` 时不会转发客户端认证凭证。
+
+流式响应按 SSE 行输出，保留换行与空行，兼容原生 Anthropic 响应及 CPA 的协议转换。下游关闭或读取结束时释放 host HTTP stream 并取消操作。
+
+本次修复不包含定时预热或额度重置功能。
+
+## 构建与验证
 
 ```bash
 make test
