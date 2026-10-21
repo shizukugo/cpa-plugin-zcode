@@ -53,11 +53,41 @@ extern void cliproxyPluginShutdown(void);
 import "C"
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"unsafe"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 )
+
+// Use CPA's host HTTP callbacks, preserving cancellation, proxy policy and logs.
+func callHostABI(method string, request []byte) ([]byte, error) {
+	name := C.CString(method)
+	defer C.free(unsafe.Pointer(name))
+	data := C.CBytes(request)
+	defer C.free(data)
+	var response C.cliproxy_buffer
+	status := C.call_host_api(name, (*C.uint8_t)(data), C.size_t(len(request)), &response)
+	if response.ptr != nil {
+		defer C.free_host_buffer(response.ptr, response.len)
+	}
+	if response.ptr == nil {
+		return nil, fmt.Errorf("host callback %s unavailable (status %d)", method, status)
+	}
+	raw := C.GoBytes(response.ptr, C.int(response.len))
+	var env envelope
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil, fmt.Errorf("host callback %s: invalid envelope", method)
+	}
+	if !env.OK || status != 0 {
+		if env.Error != nil {
+			return nil, fmt.Errorf("host callback %s: %s", method, env.Error.Message)
+		}
+		return nil, fmt.Errorf("host callback %s failed", method)
+	}
+	return env.Result, nil
+}
 
 // Config is exported for the vendored mimic package.
 //
